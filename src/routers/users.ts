@@ -62,8 +62,7 @@ users.all(
     schema: z.object({ ...userCreateSchema }).strict(),
   }),
   async (ctx) => {
-    const { dbClient, logger } = ctx.app.state;
-    const { users: usersModel } = dbClient;
+    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
     const userData = ctx.state.requestData;
 
     const user = await usersModel.create({ data: userData });
@@ -81,8 +80,7 @@ users.all(
   }),
   validateUserExist,
   async (ctx) => {
-    const { dbClient, logger } = ctx.app.state;
-    const { users: usersModel } = dbClient;
+    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
     const { requestData, user } = ctx.state;
     const { page = 1, pageSize = 12 } = requestData;
     let users: any[] = [];
@@ -116,10 +114,9 @@ users.all(
   }),
   validateUserExist,
   async (ctx) => {
-    const { logger, dbClient } = ctx.app.state;
-    const { users: usersModel } = dbClient;
-    const { id, uuid, ...userData } = ctx.state.requestData;
-    let { user } = ctx.state;
+    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
+    let { requestData, user } = ctx.state;
+    const { id, uuid, ...userData } = requestData;
 
     user = await usersModel.update({
       where: { id: user.id },
@@ -139,8 +136,7 @@ users.all(
   }),
   validateUserExist,
   async (ctx) => {
-    const { logger, dbClient } = ctx.app.state;
-    const { users: usersModel } = dbClient;
+    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
     let { user } = ctx.state;
 
     user = await usersModel.delete({ where: { uuid: user.uuid } });
