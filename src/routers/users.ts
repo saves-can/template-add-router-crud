@@ -1,6 +1,5 @@
 import {
   ApiRouter,
-  composeSchemaNullish,
   Context,
   Middleware,
   validate,
@@ -43,10 +42,11 @@ const uuidSchema = z.string().uuid();
 const idSchema = z.string().min(12);
 
 // Define schemas for creating and updating a user
-const userCreateSchema = {
+const userCreateSchema =  z.object({
   email: z.string().email(),
-};
-const userUpdateSchema = composeSchemaNullish(userCreateSchema);
+});
+
+const userUpdateSchema = userCreateSchema.partial()
 
 // Define schemas for ids and pagination
 const idsSchema = { id: idSchema.nullish(), uuid: uuidSchema.nullish() };
@@ -59,17 +59,20 @@ const pageSchema = {
 users.all(
   "/create",
   validate({
-    schema: z.object({ ...userCreateSchema }).strict(),
+    schema: userCreateSchema.strict(),
   }),
   async (ctx) => {
-    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
+    const {
+      logger,
+      dbClient: { users: usersModel },
+    } = ctx.app.state;
     const userData = ctx.state.requestData;
 
     const user = await usersModel.create({ data: userData });
 
     logger.debug("[route: user create][user created]");
     ctx.response.body = { data: { user } };
-  },
+  }
 );
 
 // Read route to get user by id or uuid, or get all users
@@ -80,7 +83,10 @@ users.all(
   }),
   validateUserExist,
   async (ctx) => {
-    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
+    const {
+      logger,
+      dbClient: { users: usersModel },
+    } = ctx.app.state;
     const { requestData, user } = ctx.state;
     const { page = 1, pageSize = 12 } = requestData;
     let users: any[] = [];
@@ -97,7 +103,7 @@ users.all(
     ctx.response.body = {
       data: { user, users, maxPage },
     };
-  },
+  }
 );
 
 // Update
@@ -105,8 +111,7 @@ users.all(
   "/update",
   validate({
     schema: z
-      .object({ ...idsSchema, ...userUpdateSchema })
-      .strict()
+      .object({ ...idsSchema  }).merge(userUpdateSchema).strip().nullable()
       .refine((data: any) => !!(data.id || data.uuid), {
         message: "Either id or uuid must be provided",
         path: ["id", "uuid"],
@@ -114,7 +119,10 @@ users.all(
   }),
   validateUserExist,
   async (ctx) => {
-    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
+    const {
+      logger,
+      dbClient: { users: usersModel },
+    } = ctx.app.state;
     let { requestData, user } = ctx.state;
     const { id, uuid, ...userData } = requestData;
 
@@ -125,7 +133,7 @@ users.all(
 
     logger.debug("[route: user update][users updated]");
     ctx.response.body = { data: { user } };
-  },
+  }
 );
 
 // Delete route
@@ -136,14 +144,17 @@ users.all(
   }),
   validateUserExist,
   async (ctx) => {
-    const { logger, dbClient: { users: usersModel } } = ctx.app.state;
+    const {
+      logger,
+      dbClient: { users: usersModel },
+    } = ctx.app.state;
     let { user } = ctx.state;
 
     user = await usersModel.delete({ where: { uuid: user.uuid } });
 
     logger.debug("[route: user deleted][users deleted]");
     ctx.response.body = { data: { user } };
-  },
+  }
 );
 
 // Export the router instance
