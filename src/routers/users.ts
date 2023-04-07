@@ -1,103 +1,99 @@
-import { any } from "https://deno.land/x/zod@v3.21.4/types.ts";
 import {
   ApiRouter,
+  composeSchemaNullish,
   Context,
-  DBClient,
   Middleware,
   validate,
   z,
 } from "../../deps.ts";
-import config from "../config.ts";
-import { logger } from "https://raw.githubusercontent.com/clau-org/api-core/v0.0.7/src/log.ts";
 
-const { users: usersModel } = new DBClient({
-  datasources: {
-    db: { url: config.PROXY_DB },
-  },
-});
+// Define middleware to validate that user exists
+const validateUserExist: Middleware = async (ctx: Context, next: any) => {
+  const { logger, dbClient } = ctx.app.state;
+  const { users: usersModel } = dbClient;
+  const { uuid, id } = ctx.state.requestData;
 
+  const user = await usersModel.findFirst({
+    where: {
+      OR: [{ uuid }, { id }],
+    },
+  });
 
-// Validation Middleware
-const userExist = ({ exit = true }: { exit?: boolean } = { }): Middleware => {
-  const middleware: Middleware = async (ctx: Context, next: any) => {
-    const { uuid, id } = ctx.state.requestData;
+  const userDoesntExist = !user;
+  const isExpected = id || uuid;
 
-    const user = await usersModel.findFirst({
-      where: {
-        OR: [
-          { uuid },
-          { id },
-        ],
-      },
-    });
+  if (userDoesntExist && isExpected) {
+    ctx.response.status = 404;
+    ctx.response.body = { message: "user doesn't exist", uuid, id };
+    logger.debug("[middleware: validateUserExist][user doesn't exist]");
+    return;
+  }
 
-    const userDoesntExist = !user;
+  ctx.state.user = user;
+  logger.debug("[middleware: validateUserExist][user exists]");
 
-    if (userDoesntExist && exit) {
-      ctx.response.status = 404;
-      ctx.response.body = { message: "User doesn't exists", uuid, id };
-      return;
-    }
-
-    ctx.state.user = user;
-
-    await next();
-  };
-  return middleware;
+  await next();
 };
 
 // Create a new router instance
 const users = new ApiRouter({ prefix: "/users" });
 
-const addNullish = (schema:any) => {
-  for (let [key] of Object.entries(schema)) {
-    schema[key] = schema[key].nullish()
-  }
-  return schema
-}
+// Define schemas by type
+const uuidSchema = z.string().uuid();
+const idSchema = z.string().min(12);
 
-const userSchema = {
-  email: z.string().email()
-}
+// Define schemas for creating and updating a user
+const userCreateSchema = {
+  email: z.string().email(),
+};
+const userUpdateSchema = composeSchemaNullish(userCreateSchema);
 
-const idSchema = {
-  id: z.string().min(12).nullish(),
-  uuid: z.string().min(12).nullish(),
-}
+// Define schemas for ids and pagination
+const idsSchema = { id: idSchema.nullish(), uuid: uuidSchema.nullish() };
 const pageSchema = {
   page: z.number().positive().nullish(),
   pageSize: z.number().positive().nullish(),
-}
+};
 
-// Read route
+// Create route to create a user
+users.all(
+  "/create",
+  validate({
+    schema: z.object({ ...userCreateSchema }).strict(),
+  }),
+  async (ctx) => {
+    const { dbClient, logger } = ctx.app.state;
+    const { users: usersModel } = dbClient;
+    const userData = ctx.state.requestData;
+
+    const user = await usersModel.create({ data: userData });
+
+    logger.debug("[route: user create][user created]");
+    ctx.response.body = { data: { user } };
+  },
+);
+
+// Read route to get user by id or uuid, or get all users
 users.all(
   "/read",
   validate({
-    schema: z.object({
-      ...idSchema,
-      ...pageSchema,
-    }),
+    schema: z.object({ ...idsSchema, ...pageSchema }),
   }),
-  userExist({exit:false}),
+  validateUserExist,
   async (ctx) => {
-    const { id, uuid, page = 1, pageSize = 12 } = ctx.state.requestData;
-
-    let { user } = ctx.state;
-    let users:any[] = [];
+    const { dbClient, logger } = ctx.app.state;
+    const { users: usersModel } = dbClient;
+    const { requestData, user } = ctx.state;
+    const { page = 1, pageSize = 12 } = requestData;
+    let users: any[] = [];
     let maxPage = 0;
 
-    if ((id || uuid) && !user) {
-      return ctx.response.body = {
-        data: { user },
-        message: `not found`,
-      };
-    }
-
     if (!user) {
+      // If user not requested, get all users
       const skip = (page - 1) * pageSize;
-
-      users = await usersModel.findMany({ skip, take: pageSize }),
+      users = await usersModel.findMany({ skip, take: pageSize });
       maxPage = Math.ceil((await usersModel.count()) / pageSize);
+      logger.debug("[route: user read][users read]");
     }
 
     ctx.response.body = {
@@ -106,49 +102,22 @@ users.all(
   },
 );
 
-// Create route
-users.all(
-  "/create",
-  validate({
-    schema: z.object({
-      ...userSchema,
-    }),
-  }),
-  async (ctx) => {
-    const { email } = ctx.state.requestData;
-
-    const user = await usersModel.create({
-      data: {
-        email,
-      },
-    });
-
-    ctx.response.body = {
-      data: { user },
-    };
-  },
-);
-
-// Update route addNullish
+// Update
 users.all(
   "/update",
   validate({
-    schema: z.object({
-      ...idSchema,
-      ...addNullish(userSchema),
-    }).strict().refine(
-      (data:any) => {
-        let isThereIdOrUuid = !!(data.id || data.uuid);
-        return isThereIdOrUuid;
-      },
-      {
+    schema: z
+      .object({ ...idsSchema, ...userUpdateSchema })
+      .strict()
+      .refine((data: any) => !!(data.id || data.uuid), {
         message: "Either id or uuid must be provided",
         path: ["id", "uuid"],
-      },
-    ),
+      }),
   }),
-  userExist(),
+  validateUserExist,
   async (ctx) => {
+    const { logger, dbClient } = ctx.app.state;
+    const { users: usersModel } = dbClient;
     const { id, uuid, ...userData } = ctx.state.requestData;
     let { user } = ctx.state;
 
@@ -157,9 +126,8 @@ users.all(
       data: { ...userData },
     });
 
-    ctx.response.body = {
-      data: { user },
-    };
+    logger.debug("[route: user update][users updated]");
+    ctx.response.body = { data: { user } };
   },
 );
 
@@ -167,17 +135,18 @@ users.all(
 users.all(
   "/delete",
   validate({
-    schema: z.object({
-      ...idSchema,
-    }),
+    schema: z.object({ ...idsSchema }),
   }),
-  userExist(),
+  validateUserExist,
   async (ctx) => {
+    const { logger, dbClient } = ctx.app.state;
+    const { users: usersModel } = dbClient;
     let { user } = ctx.state;
-    // user = await usersModel.delete({where:{uuid:user.uuid}});
-    ctx.response.body = {
-      data: { user },
-    };
+
+    user = await usersModel.delete({ where: { uuid: user.uuid } });
+
+    logger.debug("[route: user deleted][users deleted]");
+    ctx.response.body = { data: { user } };
   },
 );
 

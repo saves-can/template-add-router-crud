@@ -2,6 +2,7 @@
   "name": "users",
   "version": "0.0.1",
   "tasks": {
+    "cache": "deno cache --reload src/main.ts",
     "dev": "deno run -A --watch src/main.ts",
     "test": "deno test -A",
     "test:dev": "deno test -A --watch",
