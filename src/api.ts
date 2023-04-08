@@ -1,6 +1,6 @@
 import { API } from "../deps.ts";
 import { hello } from "./routers/hello.ts";
-import { users } from "./routers/users.ts";
+import { users } from "./routers/users/router.ts";
 import config from "./config.ts";
 
 const api = new API({ ...config });
